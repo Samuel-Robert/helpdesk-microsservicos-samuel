@@ -19,4 +19,4 @@ jobs:
       - name: Testes (inclui testes de segurança)
         run: pytest -q
       - name: Dependências com falhas conhecidas
-        run: pip-audit -r requirements.txt
+        run: for r in requirements.txt servicos/*/requirements.txt; do pip-audit -r "$r" || exit 1; done

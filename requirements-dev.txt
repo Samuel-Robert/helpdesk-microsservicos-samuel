@@ -1,4 +1,7 @@
+# Tudo o que os testes precisam: o monólito (enquanto existir), cada serviço e as ferramentas
 -r requirements.txt
+-r servicos/usuarios/requirements.txt
+-r servicos/inventario/requirements.txt
 pytest==9.2.0
 httpx==0.28.1
 pip-audit==2.10.1
