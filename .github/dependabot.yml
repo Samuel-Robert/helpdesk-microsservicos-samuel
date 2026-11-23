@@ -1,7 +1,8 @@
 version: 2
 updates:
+  # Cada serviço tem as próprias dependências e o próprio Dockerfile
   - package-ecosystem: pip
-    directory: /
+    directories: ["/servicos/*"]
     schedule:
       interval: weekly
   - package-ecosystem: github-actions
@@ -9,6 +10,6 @@ updates:
     schedule:
       interval: weekly
   - package-ecosystem: docker
-    directory: /
+    directories: ["/servicos/*"]
     schedule:
       interval: weekly
