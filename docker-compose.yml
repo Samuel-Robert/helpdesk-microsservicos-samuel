@@ -72,8 +72,33 @@ services:
       segredo:
         condition: service_completed_successfully
 
+  # Chama Usuários e Inventário pela rede, pelo nome do serviço. Não depende de eles estarem no ar
+  # para subir: se um cair, responde 503 e o disjuntor segura as próximas chamadas.
+  chamados:
+    <<: *endurecido
+    build:
+      context: .
+      dockerfile: servicos/chamados/Dockerfile
+    environment:
+      DADOS_EXEMPLO: ${DADOS_EXEMPLO:-1}
+      USUARIOS_URL: http://usuarios:8000
+      INVENTARIO_URL: http://inventario:8000
+      REDIS_URL: redis://redis:6379/0
+    # Com um serviço parado, o Docker não acha o nome dele e repassa a busca para fora, que leva
+    # uns 4 s para desistir; o tempo limite do httpx não cobre a busca do nome. Assim ela para em 1 s.
+    dns_opt:
+      - timeout:1
+      - attempts:1
+    volumes:
+      - banco-chamados:/dados
+      - segredos:/segredos:ro
+    depends_on:
+      segredo:
+        condition: service_completed_successfully
+
 volumes:
   segredos:
   redis-dados:
   banco-usuarios:
   banco-inventario:
+  banco-chamados:

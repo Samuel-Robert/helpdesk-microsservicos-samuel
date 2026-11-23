@@ -27,6 +27,12 @@ def identidade(credenciais: HTTPAuthorizationCredentials | None = Depends(esquem
         raise NAO_AUTENTICADO
 
 
+def token_do_pedido(credenciais: HTTPAuthorizationCredentials | None = Depends(esquema),
+                    quem: Identidade = Depends(identidade)) -> str:
+    """O token de quem chamou, já conferido, para repassar quando este serviço chama outro."""
+    return credenciais.credentials
+
+
 def exigir_perfil(*perfis: str):
     """Libera a rota só para os perfis informados."""
     def verificar(quem: Identidade = Depends(identidade)) -> Identidade:
