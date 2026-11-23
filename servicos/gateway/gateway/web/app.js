@@ -1,13 +1,16 @@
-// Tela do HelpDesk. Todo texto vindo da API passa por esc() antes de ir para o HTML,
-// para impedir que um título como <script> seja executado (XSS).
+// Tela do HelpDesk, servida pelo gateway. Todo texto vindo da API passa por esc() antes de ir
+// para o HTML, para impedir que um título como <script> seja executado (XSS).
 "use strict";
-const API = "";  // em microsserviços, continua vazio: a tela é servida pelo gateway
+const API = "";  // o gateway serve a tela e a API no mesmo endereço
 const $ = (id) => document.getElementById(id);
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const fmt = (s) => new Date(s).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
 const ROTULO = { aberto: "aberto", em_atendimento: "em atendimento", resolvido: "resolvido", fechado: "fechado" };
+const PRIORIDADE = { baixa: "baixa", media: "média", alta: "alta", critica: "crítica" };
+const PERFIL = { admin: "administrador", tecnico: "técnico", solicitante: "solicitante" };
+const SERVICOS = { usuarios: "Usuários", inventario: "Inventário", chamados: "Chamados", notificacoes: "Notificações" };
 
-let token = null, eu = null, usuarios = [];
+let token = null, eu = null, usuarios = [], ativos = [], vigia = null;
 try { token = sessionStorage.getItem("token"); } catch (e) { token = null; }
 
 async function req(metodo, caminho, corpo) {
@@ -16,58 +19,89 @@ async function req(metodo, caminho, corpo) {
   const r = await fetch(API + caminho, { method: metodo, headers: cab, body: corpo ? JSON.stringify(corpo) : undefined });
   const dados = await r.json().catch(() => ({}));
   if (r.status === 401 && caminho !== "/auth/login") { sair(); throw new Error("Sessão expirada. Entre novamente."); }
-  if (!r.ok) throw new Error(typeof dados.detail === "string" ? dados.detail : "Dados inválidos (" + r.status + ").");
+  if (!r.ok) {
+    const erro = new Error(typeof dados.detail === "string" ? dados.detail : "Dados inválidos (" + r.status + ").");
+    erro.rastreio = r.headers.get("X-Request-ID");  // para achar o pedido nos logs: docker compose logs | grep <id>
+    throw erro;
+  }
   return dados;
+}
+
+function avisar(erros) {
+  const lista = [].concat(erros).filter(Boolean);
+  $("alerta").hidden = lista.length === 0;
+  $("erro").textContent = [...new Set(lista.map((e) => e.message))].join(" ");
+  const ids = lista.map((e) => e.rastreio).filter(Boolean);
+  $("erro-id").textContent = ids.length ? "ID de rastreio: " + ids.join(", ") : "";
 }
 
 function guardarToken(t) { token = t; try { t ? sessionStorage.setItem("token", t) : sessionStorage.removeItem("token"); } catch (e) {} }
 function sair() { guardarToken(null); eu = null; mostrar(false); }
 function mostrar(logado) {
-  $("tela-login").hidden = logado; $("tela-sistema").hidden = !logado; $("barra").hidden = !logado;
+  $("tela-login").hidden = logado; $("tela-sistema").hidden = !logado;
+  clearInterval(vigia);
+  if (logado) { verServicos(); vigia = setInterval(verServicos, 5000); }
 }
 const nome = (id) => (usuarios.find((u) => u.id === id) || {}).nome || "—";
 const equipe = () => eu && (eu.perfil === "tecnico" || eu.perfil === "admin");
 
+// O painel de serviços: o gateway pergunta a cada um se está no ar (/saude)
+async function verServicos() {
+  let saude = null;
+  try { saude = await (await fetch(API + "/saude")).json(); } catch (e) { saude = null; }
+  $("servicos").innerHTML = Object.entries(SERVICOS).map(([chave, rotulo]) => {
+    const estado = saude ? (saude.servicos[chave] || "fora do ar") : "gateway sem resposta";
+    const classe = estado === "no ar" ? "ok" : estado === "com problemas" ? "atencao" : "fora";
+    return `<li class="${classe}"><span class="ponto" aria-hidden="true"></span>${esc(rotulo)}<small>${esc(estado)}</small></li>`;
+  }).join("");
+}
+
 async function carregar() {
-  $("erro").textContent = "";
   eu = await req("GET", "/auth/eu");
-  $("quem").textContent = eu.nome + " (" + eu.perfil + ")";
+  $("quem-nome").textContent = eu.nome;
+  $("quem-perfil").textContent = PERFIL[eu.perfil] || eu.perfil;
   // Cada parte da tela carrega separada: se um serviço cair, o resto continua aparecendo
-  const avisosDeFalha = [];
-  const tentar = (caminho, padrao) => req("GET", caminho).catch((e) => { avisosDeFalha.push(e.message); return padrao; });
-  const [lista, ativos, chamados, painel, avisos] = await Promise.all([
-    tentar("/usuarios", []), tentar("/ativos", []), tentar("/chamados", []),
+  const falhas = [];
+  const tentar = (caminho, padrao) => req("GET", caminho).catch((e) => { falhas.push(e); return padrao; });
+  const [lista, equipamentos, chamados, painel, avisos] = await Promise.all([
+    tentar("/usuarios", null), tentar("/ativos", null), tentar("/chamados", []),
     tentar("/chamados/painel", { total: 0, por_status: {}, atrasados: 0 }), tentar("/notificacoes", []),
   ]);
-  usuarios = lista;
+  // Sem resposta de Usuários ou Inventário, fica a última lista que chegou
+  if (lista) usuarios = lista;
+  if (equipamentos) ativos = equipamentos;
   const ps = painel.por_status;
-  $("kpis").innerHTML = [["Total", painel.total], ["Abertos", ps.aberto || 0], ["Em atendimento", ps.em_atendimento || 0],
-    ["Resolvidos", (ps.resolvido || 0) + (ps.fechado || 0)], ["Atrasados", painel.atrasados]]
-    .map(([t, v]) => `<div class="kpi"><small>${esc(t)}</small><b>${esc(v)}</b></div>`).join("");
+  $("kpis").innerHTML = [["Total", painel.total, ""], ["Abertos", ps.aberto || 0, "aberto"], ["Em atendimento", ps.em_atendimento || 0, "andamento"],
+    ["Resolvidos", (ps.resolvido || 0) + (ps.fechado || 0), "resolvido"], ["Atrasados", painel.atrasados, "atrasado"]]
+    .map(([t, v, c]) => `<div class="kpi ${c}"><small>${esc(t)}</small><b>${esc(v)}</b></div>`).join("");
   const tecnicos = usuarios.filter((u) => u.perfil === "tecnico");
   $("lista").innerHTML = chamados.map((c) => `<tr>
-    <td>${esc(c.id)}</td><td><b>${esc(c.titulo)}</b><br><small>${esc(nome(c.solicitante_id))}</small></td>
-    <td class="p-${esc(c.prioridade)}">${esc(c.prioridade)}</td>
-    <td><span class="pill s-${esc(c.status)}">${esc(ROTULO[c.status])}</span></td>
+    <td>${esc(c.id)}</td><td><b>${esc(c.titulo)}</b><small>${esc(nome(c.solicitante_id))}</small></td>
+    <td class="p-${esc(c.prioridade)}">${esc(PRIORIDADE[c.prioridade])}</td>
+    <td><span class="selo s-${esc(c.status)}">${esc(ROTULO[c.status])}</span></td>
     <td>${c.tecnico_id ? esc(nome(c.tecnico_id)) : "—"}</td><td>${esc(fmt(c.prazo_sla))}</td>
     <td><div class="acoes">${acoes(c, tecnicos)}</div></td></tr>`).join("") || `<tr><td colspan="7"><small>Nenhum chamado.</small></td></tr>`;
   $("avisos").innerHTML = avisos.slice().reverse().slice(0, 6).map((a) =>
-    `<div class="aviso"><b>${esc(a.tipo)}</b><br>${esc(a.mensagem)}<small>${esc(fmt(a.criada_em))}</small></div>`).join("") || "<small>Nenhuma notificação.</small>";
-  $("erro").textContent = [...new Set(avisosDeFalha)].join(" ");
+    `<div class="aviso"><b>${esc(a.tipo)}</b>${esc(a.mensagem)}<small>${esc(fmt(a.criada_em))}</small></div>`).join("") || "<small>Nenhuma notificação.</small>";
+  const escolhido = $("ativo").value;
   $("ativo").innerHTML = `<option value="">Nenhum</option>` + ativos.map((a) => `<option value="${esc(a.id)}">${esc(a.patrimonio)} · ${esc(a.descricao)}</option>`).join("");
+  $("ativo").value = escolhido;
+  avisar(falhas);
 }
 
 function acoes(c, tecnicos) {
   const botao = (acao, texto, extra = "") => `<button type="button" data-acao="${acao}" data-id="${esc(c.id)}" ${extra}>${esc(texto)}</button>`;
   if (equipe() && c.status === "aberto")
-    return `<select id="t${esc(c.id)}" aria-label="Técnico">${tecnicos.map((t) => `<option value="${esc(t.id)}">${esc(t.nome)}</option>`).join("")}</select>` + botao("atribuir", "Atribuir");
+    return `<select id="t${esc(c.id)}" aria-label="Técnico do chamado ${esc(c.id)}">${tecnicos.map((t) => `<option value="${esc(t.id)}">${esc(t.nome)}</option>`).join("")}</select>` + botao("atribuir", "Atribuir");
   if (equipe() && c.status === "em_atendimento") return botao("resolvido", "Resolver");
   if (c.status === "resolvido" && (equipe() || c.solicitante_id === eu.id))
     return botao("fechado", "Fechar") + botao("em_atendimento", "Reabrir", 'class="sec"');
   return "";
 }
 
-async function acao(f) { try { await f(); await carregar(); } catch (e) { $("erro").textContent = e.message; } }
+async function acao(f) {
+  try { await f(); await carregar(); } catch (e) { avisar(e); verServicos(); }
+}
 
 $("lista").addEventListener("click", (e) => {
   const b = e.target.closest("button[data-acao]");
@@ -97,4 +131,4 @@ $("tela-login").addEventListener("submit", async (e) => {
 
 $("sair").addEventListener("click", sair);
 
-if (token) { mostrar(true); carregar().catch((e) => { $("erro").textContent = e.message; }); } else { mostrar(false); }
+if (token) { mostrar(true); carregar().catch(avisar); } else { mostrar(false); }
