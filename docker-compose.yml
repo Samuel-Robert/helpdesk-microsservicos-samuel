@@ -96,6 +96,24 @@ services:
       segredo:
         condition: service_completed_successfully
 
+  # Lê os eventos de Chamados no Redis, em grupo de consumo: se este serviço cair,
+  # os eventos esperam no fluxo e são lidos quando ele volta.
+  notificacoes:
+    <<: *endurecido
+    build:
+      context: .
+      dockerfile: servicos/notificacoes/Dockerfile
+    environment:
+      REDIS_URL: redis://redis:6379/0
+    volumes:
+      - banco-notificacoes:/dados
+      - segredos:/segredos:ro
+    depends_on:
+      segredo:
+        condition: service_completed_successfully
+      redis:
+        condition: service_started
+
   # O único ponto de entrada, e a única porta publicada (só no próprio computador).
   # Serve a tela e encaminha cada rota ao serviço certo, pelo nome dele na rede do Docker.
   gateway:
@@ -114,6 +132,7 @@ services:
       - usuarios
       - inventario
       - chamados
+      - notificacoes
 
 volumes:
   segredos:
@@ -121,3 +140,4 @@ volumes:
   banco-usuarios:
   banco-inventario:
   banco-chamados:
+  banco-notificacoes:

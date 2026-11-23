@@ -2,6 +2,7 @@
 -r servicos/usuarios/requirements.txt
 -r servicos/inventario/requirements.txt
 -r servicos/chamados/requirements.txt
+-r servicos/notificacoes/requirements.txt
 -r servicos/gateway/requirements.txt
 pytest==9.2.0
 httpx==0.28.1
