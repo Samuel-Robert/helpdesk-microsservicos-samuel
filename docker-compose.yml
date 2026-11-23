@@ -10,6 +10,11 @@ x-endurecido: &endurecido
   cap_drop:
     - ALL
   restart: unless-stopped
+  # Com um serviço parado, o Docker não acha o nome dele e repassa a busca para fora, que leva
+  # uns 4 s para desistir; o tempo limite do httpx não cobre a busca do nome. Assim ela para em 1 s.
+  dns_opt:
+    - timeout:1
+    - attempts:1
   env_file:
     - path: .env
       required: false
@@ -84,17 +89,31 @@ services:
       USUARIOS_URL: http://usuarios:8000
       INVENTARIO_URL: http://inventario:8000
       REDIS_URL: redis://redis:6379/0
-    # Com um serviço parado, o Docker não acha o nome dele e repassa a busca para fora, que leva
-    # uns 4 s para desistir; o tempo limite do httpx não cobre a busca do nome. Assim ela para em 1 s.
-    dns_opt:
-      - timeout:1
-      - attempts:1
     volumes:
       - banco-chamados:/dados
       - segredos:/segredos:ro
     depends_on:
       segredo:
         condition: service_completed_successfully
+
+  # O único ponto de entrada, e a única porta publicada (só no próprio computador).
+  # Serve a tela e encaminha cada rota ao serviço certo, pelo nome dele na rede do Docker.
+  gateway:
+    <<: *endurecido
+    build:
+      context: .
+      dockerfile: servicos/gateway/Dockerfile
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      USUARIOS_URL: http://usuarios:8000
+      INVENTARIO_URL: http://inventario:8000
+      CHAMADOS_URL: http://chamados:8000
+      NOTIFICACOES_URL: http://notificacoes:8000
+    depends_on:
+      - usuarios
+      - inventario
+      - chamados
 
 volumes:
   segredos:
