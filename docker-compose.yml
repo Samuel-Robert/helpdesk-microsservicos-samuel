@@ -58,7 +58,22 @@ services:
       redis:
         condition: service_started
 
+  inventario:
+    <<: *endurecido
+    build:
+      context: .
+      dockerfile: servicos/inventario/Dockerfile
+    environment:
+      DADOS_EXEMPLO: ${DADOS_EXEMPLO:-1}
+    volumes:
+      - banco-inventario:/dados
+      - segredos:/segredos:ro
+    depends_on:
+      segredo:
+        condition: service_completed_successfully
+
 volumes:
   segredos:
   redis-dados:
   banco-usuarios:
+  banco-inventario:
