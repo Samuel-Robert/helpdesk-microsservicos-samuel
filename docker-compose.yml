@@ -1,22 +1,64 @@
+# HelpDesk TI em microsserviços. Sobe tudo com: docker compose up --build
+
+# O que vale para todo serviço: sem root, disco só de leitura, sem privilégios extras
+x-endurecido: &endurecido
+  read_only: true
+  tmpfs:
+    - /tmp
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  restart: unless-stopped
+  env_file:
+    - path: .env
+      required: false
+
 services:
-  helpdesk:
-    build: .
-    ports:
-      - "127.0.0.1:8000:8000"   # só acessível pelo próprio computador
-    env_file:
-      - path: .env
-        required: false
-    environment:
-      DADOS_EXEMPLO: ${DADOS_EXEMPLO:-1}
+  # Gera o segredo dos tokens na primeira subida, se o .env não trouxer um JWT_SEGREDO.
+  # Ele fica num volume que só os serviços leem: nunca no código nem no Git.
+  segredo:
+    image: python:3.12-slim
+    command:
+      - python
+      - -c
+      - "import os,secrets;p='/segredos/jwt';e=os.path.exists(p);e or open(p,'w').write(secrets.token_urlsafe(48));e or os.chmod(p,0o400);e or os.chown(p,10001,10001)"
     volumes:
-      - dados:/dados
+      - segredos:/segredos
+    network_mode: none
     read_only: true
-    tmpfs:
-      - /tmp
-    security_opt:
-      - no-new-privileges:true
     cap_drop:
       - ALL
+    cap_add:
+      - CHOWN   # só para entregar o arquivo ao usuário dos serviços (uid 10001)
+
+  # Fila de eventos e limite de tentativas de login. Sem porta para fora.
+  redis:
+    <<: *endurecido
+    image: redis:7.4.5-alpine
+    user: redis   # já começa sem root: a imagem não precisa trocar de usuário (e não teria permissão)
+    command: ["redis-server", "--appendonly", "yes"]   # os eventos sobrevivem a um reinício
+    volumes:
+      - redis-dados:/data
+
+  usuarios:
+    <<: *endurecido
+    build:
+      context: .
+      dockerfile: servicos/usuarios/Dockerfile
+    environment:
+      DADOS_EXEMPLO: ${DADOS_EXEMPLO:-1}
+      REDIS_URL: redis://redis:6379/0
+    volumes:
+      - banco-usuarios:/dados
+      - segredos:/segredos:ro
+    depends_on:
+      segredo:
+        condition: service_completed_successfully
+      redis:
+        condition: service_started
 
 volumes:
-  dados:
+  segredos:
+  redis-dados:
+  banco-usuarios:
