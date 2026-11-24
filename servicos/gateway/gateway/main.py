@@ -45,7 +45,9 @@ configurar_logs("gateway")
 
 @asynccontextmanager
 async def ciclo_de_vida(app: FastAPI):
-    app.state.http = httpx.AsyncClient(timeout=TEMPO_LIMITE)
+    # Conexão parada é descartada em 2 s: o uvicorn dos serviços fecha a dele em 5 s, e reaproveitar
+    # uma conexão no instante em que ela fecha derruba o pedido (a tela mostrava "fora do ar" à toa)
+    app.state.http = httpx.AsyncClient(timeout=TEMPO_LIMITE, limits=httpx.Limits(keepalive_expiry=2))
     log.info("gateway no ar, encaminhando para %s", ", ".join(SERVICOS))
     yield
     await app.state.http.aclose()

@@ -22,7 +22,10 @@ TEMPO_LIMITE = float(os.getenv("TEMPO_LIMITE_SEGUNDOS", "2"))
 DISJUNTOR_FALHAS = int(os.getenv("DISJUNTOR_FALHAS", "3"))
 DISJUNTOR_SEGUNDOS = float(os.getenv("DISJUNTOR_SEGUNDOS", "15"))
 
-http = httpx.Client(timeout=TEMPO_LIMITE)  # os testes trocam por um cliente de rede falsa
+# Os testes trocam este cliente por um de rede falsa. Conexão parada é descartada em 2 s: o uvicorn
+# do outro lado fecha a dele em 5 s, e reaproveitar uma conexão no instante em que ela fecha
+# derruba o pedido (RemoteProtocolError)
+http = httpx.Client(timeout=TEMPO_LIMITE, limits=httpx.Limits(keepalive_expiry=2))
 
 
 class Disjuntor:
