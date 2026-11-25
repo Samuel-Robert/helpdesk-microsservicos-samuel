@@ -1,10 +1,15 @@
 version: 2
 updates:
-  # Cada serviço tem as próprias dependências e o próprio Dockerfile
+  # Cada serviço tem as próprias dependências e o próprio Dockerfile.
+  # O CI instala todos juntos (requirements-dev.txt), então a mesma biblioteca
+  # sobe em todos os serviços no mesmo PR: um PR por dependência, não por pasta.
   - package-ecosystem: pip
     directories: ["/servicos/*"]
     schedule:
       interval: weekly
+    groups:
+      mesma-versao:
+        group-by: dependency-name
   - package-ecosystem: github-actions
     directory: /
     schedule:
@@ -13,3 +18,6 @@ updates:
     directories: ["/servicos/*"]
     schedule:
       interval: weekly
+    groups:
+      mesma-imagem:
+        group-by: dependency-name
